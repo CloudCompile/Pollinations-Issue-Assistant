@@ -1,0 +1,12 @@
+name: "Pollinations AI Issue Bot"
+description: "Responds to !pollinations issues by generating code and opening a PR"
+inputs:
+  github-token:
+    description: "GitHub token for committing and PR creation"
+    required: true
+  pollinations-api:
+    description: "Pollinations API endpoint or key"
+    required: true
+runs:
+  using: "node20"
+  main: "index.js"
