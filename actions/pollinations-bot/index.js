@@ -55,7 +55,7 @@ async function run() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "gpt-4o-mini",
+          model: "openai",
           messages: [
             {
               role: "system",
