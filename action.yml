@@ -1,0 +1,60 @@
+name: "Pollinations Issue Assistant"
+description: "Automatically responds to issues, handles commands, auto-labels, and estimates severity using Pollinations AI."
+author: "CloudCompile"
+branding:
+  icon: "alert-circle"
+  color: "blue"
+
+inputs:
+  model:
+    description: "AI model to use"
+    required: false
+    default: "openai"
+  referrer:
+    description: "Referrer for Pollinations AI"
+    required: false
+    default: "prisimai.github.io"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Detect Command
+      shell: bash
+      run: |
+        BODY="${{ github.event.comment.body:-${{ github.event.issue.body }}}}"
+        COMMAND=$(echo "$BODY" | grep -oE "^/([a-zA-Z]+)" | head -1 | tr -d '/')
+        echo "COMMAND=$COMMAND" >> $GITHUB_ENV
+
+    - name: Generate AI Response
+      shell: bash
+      run: |
+        PROMPT="Command: ${{ env.COMMAND:-auto}}
+Issue Title: ${{ github.event.issue.title }}
+Issue Body: ${{ github.event.issue.body }}
+Previous Comments: $(jq -r '.comments_url' <<< '${{ toJSON(github.event) }}')
+Please classify the issue as Bug, Feature, or Question, and estimate severity (Low, Medium, High)."
+
+        ENCODED_PROMPT=$(echo "$PROMPT" | jq -sRr @uri)
+        RESPONSE=$(curl -s "https://text.pollinations.ai/openai/$ENCODED_PROMPT?model=${{ inputs.model }}&referrer=${{ inputs.referrer }}")
+
+        # Extract labels & severity from AI response (assuming AI outputs "LABEL: Bug, SEVERITY: High")
+        LABEL=$(echo "$RESPONSE" | grep -oP "(?<=LABEL: )\w+")
+        SEVERITY=$(echo "$RESPONSE" | grep -oP "(?<=SEVERITY: )\w+")
+        
+        # Markdown styling for issue comment
+        RESPONSE="**Prisimai AI Response (${ { env.COMMAND:-auto } }):**\n\n$RESPONSE\n\n**Labels:** $LABEL | **Severity:** $SEVERITY"
+        echo "AI_REPLY=$RESPONSE" >> $GITHUB_ENV
+        echo "AI_LABEL=$LABEL" >> $GITHUB_ENV
+
+    - name: Comment on Issue
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        issue-number: ${{ github.event.issue.number }}
+        body: ${{ env.AI_REPLY }}
+
+    - name: Add Labels
+      if: env.AI_LABEL != ''
+      uses: actions-ecosystem/action-add-labels@v1
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        labels: ${{ env.AI_LABEL }}
