@@ -1,6 +1,9 @@
 name: "AI Issue Responder (Pollinations)"
 description: "Generate GitHub issue replies using Pollinations.AI"
 author: "CJ Hauser"
+branding:
+  icon: "alert-circle",
+  color: "blue"
 inputs:
   pollinations_token:
     description: "Pollinations API Bearer token (optional for anonymous)"
