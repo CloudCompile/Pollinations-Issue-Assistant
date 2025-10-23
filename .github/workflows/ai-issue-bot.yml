@@ -1,0 +1,22 @@
+name: AI Issue Bot
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  pollinations-bot:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '!pollinations') || startsWith(github.event.issue.body, '!pollinations')
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Pollinations AI Bot
+        uses: ./actions/pollinations-bot
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pollinations-api: ${{ secrets.POLLINATIONS_API }}
