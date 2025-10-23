@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Pollinations AI Bot
-        uses: cloudcompile/pollinations-ai-issue-bot@v1.1.0
+        uses: cloudcompile/pollinations-issue-assistant@v1.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pollinations-api: ${{ secrets.POLLINATIONS_API }}
