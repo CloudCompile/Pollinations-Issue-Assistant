@@ -19,4 +19,4 @@ jobs:
         uses: cloudcompile/pollinations-issue-assistant@v1.1.2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pollinations-api: text.pollinations.ai/openai/
+          pollinations-api: 'text.pollinations.ai/openai/'
