@@ -1,61 +1,122 @@
-name: "Pollinations Issue Bot"
-description: "Automatically responds to issues, handles commands, auto-labels, and estimates severity using Pollinations AI."
-author: "CloudCompile"
-branding:
-  icon: "alert-circle"
-  color: "blue"
-
+name: "AI Issue Responder (Pollinations)"
+description: "Generate GitHub issue replies using Pollinations.AI"
+author: "CJ Hauser"
 inputs:
+  pollinations_token:
+    description: "Pollinations API Bearer token (optional for anonymous)"
+    required: false
   model:
-    description: "AI model to use"
+    description: "Model to use (e.g., openai)"
     required: false
     default: "openai"
-  referrer:
-    description: "Referrer for Pollinations AI"
+  temperature:
+    description: "Sampling temperature (0–3)"
     required: false
-    default: "prisimai.github.io"
-
+    default: "0.7"
+  close_on_resolution:
+    description: "Close the issue automatically if AI suggests it"
+    required: false
+    default: "false"
 outputs:
-  ai_response:
-    description: "The AI-generated comment"
-  ai_label:
-    description: "Label suggested by AI"
+  comment_id:
+    description: "The ID of the comment the action posted"
 
 runs:
   using: "composite"
   steps:
-    - name: Generate AI Response
+    - name: Install dependencies
       shell: bash
       run: |
-        BODY="${{ github.event.comment.body:-${{ github.event.issue.body }}}}"
-        COMMAND=$(echo "$BODY" | grep -oE "^/([a-zA-Z]+)" | head -1 | tr -d '/')
-        echo "COMMAND=${COMMAND}" >> $GITHUB_ENV
+        npm install node-fetch@3 @actions/core@1 @actions/github@5
 
-        PROMPT="Command: ${COMMAND:-auto}
-Issue Title: ${{ github.event.issue.title }}
-Issue Body: ${{ github.event.issue.body }}
-Previous Comments: $(jq -r '.comments_url' <<< '${{ toJSON(github.event) }}')
-Please classify the issue as Bug, Feature, or Question, and estimate severity (Low, Medium, High)."
+    - name: Run AI issue responder
+      shell: node {0}
+      env:
+        POLLINATIONS_TOKEN: ${{ inputs.pollinations_token }}
+        MODEL: ${{ inputs.model }}
+        TEMP: ${{ inputs.temperature }}
+        CLOSE_ON_RESOLUTION: ${{ inputs.close_on_resolution }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        import fs from "fs";
+        import fetch from "node-fetch";
+        import * as github from "@actions/github";
+        import * as core from "@actions/core";
 
-        ENCODED_PROMPT=$(echo "$PROMPT" | jq -sRr @uri)
-        RESPONSE=$(curl -s "https://text.pollinations.ai/openai/$ENCODED_PROMPT?model=${{ inputs.model }}&referrer=${{ inputs.referrer }}")
+        async function main() {
+          const context = github.context;
+          if (!context.payload.issue) {
+            core.setFailed("This action must run on issue events.");
+            return;
+          }
 
-        LABEL=$(echo "$RESPONSE" | grep -oP "(?<=LABEL: )\w+")
-        SEVERITY=$(echo "$RESPONSE" | grep -oP "(?<=SEVERITY: )\w+")
-        COMMENT="**Prisimai AI Response (${COMMAND:-auto}):**\n\n$RESPONSE\n\n**Labels:** $LABEL | **Severity:** $SEVERITY"
+          const { issue } = context.payload;
+          const { owner, repo } = context.repo;
+          const issue_number = issue.number;
 
-        echo "ai_response=$COMMENT" >> $GITHUB_OUTPUT
-        echo "ai_label=$LABEL" >> $GITHUB_OUTPUT
+          const systemPrompt = `You are a concise, helpful GitHub assistant. Write a helpful reply to the issue.`;
+          const userPrompt = `Issue title: ${issue.title}\n\nIssue body:\n${issue.body ?? "(no body)"}\n\nRepo: ${owner}/${repo} #${issue_number}`;
 
-    - name: Comment on Issue
-      uses: peter-evans/create-or-update-comment@v4
-      with:
-        issue-number: ${{ github.event.issue.number }}
-        body: ${{ steps.Generate_AI_Response.outputs.ai_response }}
+          const payload = {
+            model: process.env.MODEL || "openai",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt }
+            ],
+            temperature: parseFloat(process.env.TEMP || "0.7"),
+            max_tokens: 800
+          };
 
-    - name: Add Labels
-      if: ${{ steps.Generate_AI_Response.outputs.ai_label != '' }}
-      uses: actions-ecosystem/action-add-labels@v1
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        labels: ${{ steps.Generate_AI_Response.outputs.ai_label }}
+          const headers = { "Content-Type": "application/json" };
+          if (process.env.POLLINATIONS_TOKEN) {
+            headers.Authorization = `Bearer ${process.env.POLLINATIONS_TOKEN}`;
+          }
+
+          core.info("Sending request to Pollinations...");
+          const res = await fetch("https://text.pollinations.ai/openai", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            core.setFailed(`Pollinations error ${res.status}: ${text}`);
+            return;
+          }
+
+          const data = await res.json();
+          const reply =
+            data?.choices?.[0]?.message?.content ||
+            data?.choices?.[0]?.text ||
+            JSON.stringify(data);
+
+          const octokit = github.getOctokit(process.env.GITHUB_TOKEN);
+          const comment = await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number,
+            body: reply
+          });
+
+          core.setOutput("comment_id", comment.data.id);
+          core.info(`Comment posted: ${comment.data.id}`);
+
+          if (
+            (process.env.CLOSE_ON_RESOLUTION || "").toLowerCase() === "true" &&
+            /can be closed|closing this issue/i.test(reply)
+          ) {
+            await octokit.rest.issues.update({
+              owner,
+              repo,
+              issue_number,
+              state: "closed"
+            });
+            core.info("Issue closed per AI suggestion.");
+          }
+        }
+
+        main().catch((err) => {
+          console.error(err);
+          process.exit(1);
+        });
